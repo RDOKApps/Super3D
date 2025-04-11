@@ -76,7 +76,7 @@ class CameraControls extends Script {
      * @type {number}
      * @private
      */
-    _zoomDist = 0;
+    _zoomDist = 1; // Default to 1 so it is non-zero for initial orbit calculations
 
     /**
      * @type {number}
@@ -298,6 +298,7 @@ class CameraControls extends Script {
         this.sprintSpeed = sprintSpeed ?? this.sprintSpeed;
         this.crouchSpeed = crouchSpeed ?? this.crouchSpeed;
 
+        // Bind event methods.
         this._onWheel = this._onWheel.bind(this);
         this._onKeyDown = this._onKeyDown.bind(this);
         this._onKeyUp = this._onKeyUp.bind(this);
@@ -734,10 +735,16 @@ class CameraControls extends Script {
         const mouseW = this._camera.screenToWorld(pos.x, pos.y, 1);
         const cameraPos = this._camera.entity.getPosition();
 
-        const focusDirScaled = tmpV1.copy(this._camera.entity.forward).mulScalar(this._zoomDist);
+        // Use a fallback value if _zoomDist is 0.
+        const effectiveZoomDist = this._zoomDist || 1;
+        const focusDirScaled = tmpV1.copy(this._camera.entity.forward).mulScalar(effectiveZoomDist);
         const focalPos = tmpV2.add2(cameraPos, focusDirScaled);
-        const planeNormal = focusDirScaled.mulScalar(-1).normalize();
-
+        
+        let planeNormal = focusDirScaled.mulScalar(-1);
+        if (planeNormal.lengthSq() > 0) {
+            planeNormal = planeNormal.normalize();
+        }
+        
         const plane = tmpP1.setFromPointNormal(focalPos, planeNormal);
         const ray = tmpR1.set(cameraPos, mouseW.sub(cameraPos).normalize());
 
