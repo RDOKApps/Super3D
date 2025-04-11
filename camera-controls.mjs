@@ -76,7 +76,7 @@ class CameraControls extends Script {
      * @type {number}
      * @private
      */
-    _zoomDist = 1; // Default to 1 so it is non-zero for initial orbit calculations
+    _zoomDist = 0;
 
     /**
      * @type {number}
@@ -298,7 +298,6 @@ class CameraControls extends Script {
         this.sprintSpeed = sprintSpeed ?? this.sprintSpeed;
         this.crouchSpeed = crouchSpeed ?? this.crouchSpeed;
 
-        // Bind event methods.
         this._onWheel = this._onWheel.bind(this);
         this._onKeyDown = this._onKeyDown.bind(this);
         this._onKeyUp = this._onKeyUp.bind(this);
@@ -437,14 +436,8 @@ class CameraControls extends Script {
      * @returns {boolean} Whether the mouse pan should start.
      */
     _isStartMousePan(event) {
-        if (!this.enablePan) {
-            return false;
-        }
-        // Modified: Left mouse button (0) now triggers pan
-        if (event.shiftKey) {
-            return true;
-        }
-        return event.button === 0 || event.button === 1;
+        // Only allow panning on left mouse button (button === 0)
+        return this.enablePan && event.button === 0;
     }
 
     /**
@@ -453,11 +446,8 @@ class CameraControls extends Script {
      * @returns {boolean} Whether the fly should start.
      */
     _isStartFly(event) {
-        if (!this.enableFly) {
-            return false;
-        }
-        // Middle mouse button (1) for fly mode if enabled
-        return event.button === 1;
+        // Disable fly mode (middle mouse button) for this configuration.
+        return false;
     }
 
     /**
@@ -466,11 +456,8 @@ class CameraControls extends Script {
      * @private
      */
     _isStartOrbit(event) {
-        if (!this.enableOrbit) {
-            return false;
-        }
-        // Modified: Right mouse button (2) now triggers orbit
-        return event.button === 2;
+        // Only allow orbiting on right mouse button (button === 2)
+        return this.enableOrbit && event.button === 2;
     }
 
     /**
@@ -484,24 +471,17 @@ class CameraControls extends Script {
         this._element.setPointerCapture(event.pointerId);
         this._pointerEvents.set(event.pointerId, event);
 
-        const startTouchPan = this.enablePan && this._pointerEvents.size === 2;
         const startMousePan = this._isStartMousePan(event);
         const startFly = this._isStartFly(event);
         const startOrbit = this._isStartOrbit(event);
 
-        if (startTouchPan) {
-            // start touch pan
-            this._lastPinchDist = this._getPinchDist();
-            this._getMidPoint(this._lastPosition);
-            this._panning = true;
-        }
         if (startMousePan) {
-            // start mouse pan
+            // Start pan with left mouse button
             this._lastPosition.set(event.clientX, event.clientY);
             this._panning = true;
         }
         if (startFly) {
-            // start fly
+            // This branch will not be hit since _isStartFly returns false.
             this._zoomDist = this._cameraDist;
             this._origin.copy(this._camera.entity.getPosition());
             this._position.copy(this._origin);
@@ -509,7 +489,7 @@ class CameraControls extends Script {
             this._flying = true;
         }
         if (startOrbit) {
-            // Modified orbit: Set the orbit pivot to the world point under the mouse press.
+            // On right mouse button press, set the orbit pivot to the world point under the mouse press.
             const orbitPivot = new Vec3();
             const screenPos = new Vec2(event.clientX, event.clientY);
             this._screenToWorldPan(screenPos, orbitPivot);
@@ -531,7 +511,7 @@ class CameraControls extends Script {
 
         if (this._pointerEvents.size === 1) {
             if (this._panning) {
-                // mouse pan
+                // Mouse pan
                 this._pan(tmpVa.set(event.clientX, event.clientY));
             } else if (this._orbiting || this._flying) {
                 this._look(event);
@@ -540,12 +520,12 @@ class CameraControls extends Script {
         }
 
         if (this._pointerEvents.size === 2) {
-            // touch pan
+            // Touch pan (if applicable)
             if (this._panning) {
                 this._pan(this._getMidPoint(tmpVa));
             }
 
-            // pinch zoom
+            // Pinch zoom (if applicable)
             const pinchDist = this._getPinchDist();
             if (this._lastPinchDist > 0) {
                 this._zoom((this._lastPinchDist - pinchDist) * this.pinchSpeed);
@@ -735,16 +715,10 @@ class CameraControls extends Script {
         const mouseW = this._camera.screenToWorld(pos.x, pos.y, 1);
         const cameraPos = this._camera.entity.getPosition();
 
-        // Use a fallback value if _zoomDist is 0.
-        const effectiveZoomDist = this._zoomDist || 1;
-        const focusDirScaled = tmpV1.copy(this._camera.entity.forward).mulScalar(effectiveZoomDist);
+        const focusDirScaled = tmpV1.copy(this._camera.entity.forward).mulScalar(this._zoomDist);
         const focalPos = tmpV2.add2(cameraPos, focusDirScaled);
-        
-        let planeNormal = focusDirScaled.mulScalar(-1);
-        if (planeNormal.lengthSq() > 0) {
-            planeNormal = planeNormal.normalize();
-        }
-        
+        const planeNormal = focusDirScaled.mulScalar(-1).normalize();
+
         const plane = tmpP1.setFromPointNormal(focalPos, planeNormal);
         const ray = tmpR1.set(cameraPos, mouseW.sub(cameraPos).normalize());
 
