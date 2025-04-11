@@ -436,8 +436,14 @@ class CameraControls extends Script {
      * @returns {boolean} Whether the mouse pan should start.
      */
     _isStartMousePan(event) {
-        // Only allow panning on left mouse button (button === 0)
-        return this.enablePan && event.button === 0;
+        if (!this.enablePan) {
+            return false;
+        }
+        // Modified: Left mouse button (0) now triggers pan
+        if (event.shiftKey) {
+            return true;
+        }
+        return event.button === 0 || event.button === 1;
     }
 
     /**
@@ -446,8 +452,11 @@ class CameraControls extends Script {
      * @returns {boolean} Whether the fly should start.
      */
     _isStartFly(event) {
-        // Disable fly mode (middle mouse button) for this configuration.
-        return false;
+        if (!this.enableFly) {
+            return false;
+        }
+        // Middle mouse button (1) for fly mode if enabled
+        return event.button === 1;
     }
 
     /**
@@ -456,8 +465,11 @@ class CameraControls extends Script {
      * @private
      */
     _isStartOrbit(event) {
-        // Only allow orbiting on right mouse button (button === 2)
-        return this.enableOrbit && event.button === 2;
+        if (!this.enableOrbit) {
+            return false;
+        }
+        // Modified: Right mouse button (2) now triggers orbit
+        return event.button === 2;
     }
 
     /**
@@ -471,17 +483,24 @@ class CameraControls extends Script {
         this._element.setPointerCapture(event.pointerId);
         this._pointerEvents.set(event.pointerId, event);
 
+        const startTouchPan = this.enablePan && this._pointerEvents.size === 2;
         const startMousePan = this._isStartMousePan(event);
         const startFly = this._isStartFly(event);
         const startOrbit = this._isStartOrbit(event);
 
+        if (startTouchPan) {
+            // start touch pan
+            this._lastPinchDist = this._getPinchDist();
+            this._getMidPoint(this._lastPosition);
+            this._panning = true;
+        }
         if (startMousePan) {
-            // Start pan with left mouse button
+            // start mouse pan
             this._lastPosition.set(event.clientX, event.clientY);
             this._panning = true;
         }
         if (startFly) {
-            // This branch will not be hit since _isStartFly returns false.
+            // start fly
             this._zoomDist = this._cameraDist;
             this._origin.copy(this._camera.entity.getPosition());
             this._position.copy(this._origin);
@@ -489,7 +508,7 @@ class CameraControls extends Script {
             this._flying = true;
         }
         if (startOrbit) {
-            // On right mouse button press, set the orbit pivot to the world point under the mouse press.
+            // Modified orbit: Set the orbit pivot to the world point under the mouse press.
             const orbitPivot = new Vec3();
             const screenPos = new Vec2(event.clientX, event.clientY);
             this._screenToWorldPan(screenPos, orbitPivot);
@@ -511,7 +530,7 @@ class CameraControls extends Script {
 
         if (this._pointerEvents.size === 1) {
             if (this._panning) {
-                // Mouse pan
+                // mouse pan
                 this._pan(tmpVa.set(event.clientX, event.clientY));
             } else if (this._orbiting || this._flying) {
                 this._look(event);
@@ -520,12 +539,12 @@ class CameraControls extends Script {
         }
 
         if (this._pointerEvents.size === 2) {
-            // Touch pan (if applicable)
+            // touch pan
             if (this._panning) {
                 this._pan(this._getMidPoint(tmpVa));
             }
 
-            // Pinch zoom (if applicable)
+            // pinch zoom
             const pinchDist = this._getPinchDist();
             if (this._lastPinchDist > 0) {
                 this._zoom((this._lastPinchDist - pinchDist) * this.pinchSpeed);
