@@ -5,7 +5,7 @@ import { Vec2, Vec3, Ray, Plane, Mat4, Quat, Script, math } from 'https://cdn.js
 
 const tmpVa = new Vec2();
 const tmpV1 = new Vec3();
-const tmpV2 = new Vec3();  // for computing orbit offset
+const tmpV2 = new Vec3();  // used for computing orbit offset
 const tmpM1 = new Mat4();
 const tmpQ1 = new Quat();
 const tmpR1 = new Ray();
@@ -17,38 +17,37 @@ const ZOOM_SCALE_SCENE_MULT = 10;
 /**
  * Calculate the lerp rate.
  * @param {number} damping - The damping.
- * @param {number} dt - The delta time.
+ * @param {number} dt - Delta time.
  * @returns {number} - The lerp rate.
  */
 const lerpRate = (damping, dt) => 1 - Math.pow(damping, dt * 1000);
 
 class CameraControls extends Script {
     _camera = null;
-    // The focal point that the camera orbits around.
+    // The focal point the camera orbits around.
     _origin = new Vec3();
-    // The camera's current computed position.
+    // The computed camera position.
     _position = new Vec3();
-    // Used to track input for rotation (in degrees).
+    // Stores input for rotation.
     _dir = new Vec2();
-    // Current Euler angles for orbit (pitch then yaw).
+    // Current Euler angles: _angles.x is pitch; _angles.y is yaw.
     _angles = new Vec3();
     _pitchRange = new Vec2(-360, 360);
     _zoomMin = 0;
     _zoomMax = 0;
-    // _zoomDist is the desired orbit radius.
+    // _zoomDist acts as the orbit radius.
     _zoomDist = 0;
-    // _cameraDist is the smoothed zoom distance.
     _cameraDist = 0;
     _pointerEvents = new Map();
     _lastPinchDist = -1;
     _lastPosition = new Vec2();
-    // _panning is true when left mouse is dragging.
+    // Left mouse flag for panning.
     _panning = false;
-    // _rotating is true when right mouse is dragging.
+    // Right mouse flag for rotating the view.
     _rotating = false;
-    // Fly mode is disabled in this revision.
+    // Fly mode not used.
     _flying = false;
-    // Standard key state.
+    // Standard key state (others remain unaffected).
     _key = {
         forward: false,
         backward: false,
@@ -57,14 +56,12 @@ class CameraControls extends Script {
         sprint: false,
         crouch: false
     };
-    // New flags for key-based rotation (Q/E keys).
-    _rotateLeft = false;
-    _rotateRight = false;
+    // HTML element for event attachments.
     _element;
     _cameraTransform = new Mat4();
     _baseTransform = new Mat4();
 
-    // Scene and camera control attributes.
+    // Scene settings.
     sceneSize = 100;
     lookSensitivity = 0.2;
     lookDamping = 0.97;
@@ -78,8 +75,8 @@ class CameraControls extends Script {
     moveSpeed = 2;
     sprintSpeed = 4;
     crouchSpeed = 1;
-    // Sensitivity multiplier used by Q/E for horizontal orbit adjustment.
-    rotateSensitivity = 30;  // degrees per second at full press
+    // rotateSensitivity is in degrees per key press step (or per dt unit).
+    rotateSensitivity = 30;
 
     /**
      * @param {object} args - The script arguments.
@@ -105,6 +102,7 @@ class CameraControls extends Script {
             sprintSpeed,
             crouchSpeed
         } = args.attributes;
+
         this._element = element ?? this.app.graphicsDevice.canvas;
         this.enableOrbit = enableOrbit ?? this.enableOrbit;
         this.enablePan = enablePan ?? this.enablePan;
@@ -118,7 +116,7 @@ class CameraControls extends Script {
         this.moveSpeed = moveSpeed ?? this.moveSpeed;
         this.sprintSpeed = sprintSpeed ?? this.sprintSpeed;
         this.crouchSpeed = crouchSpeed ?? this.crouchSpeed;
-        // Bind event handlers.
+
         this._onWheel = this._onWheel.bind(this);
         this._onKeyDown = this._onKeyDown.bind(this);
         this._onKeyUp = this._onKeyUp.bind(this);
@@ -126,11 +124,12 @@ class CameraControls extends Script {
         this._onPointerMove = this._onPointerMove.bind(this);
         this._onPointerUp = this._onPointerUp.bind(this);
         this._onContextMenu = this._onContextMenu.bind(this);
+
         if (!this.entity.camera) {
             throw new Error('CameraControls script requires a camera component');
         }
         this.attach(this.entity.camera);
-        // Set initial focus.
+
         this.focusPoint = focusPoint ?? this.focusPoint;
         this.pitchRange = pitchRange ?? this.pitchRange;
         this.zoomMin = zoomMin ?? this.zoomMin;
@@ -192,11 +191,11 @@ class CameraControls extends Script {
     _isStartMousePan(event) {
         return this.enablePan && event.button === 0;
     }
-    // Disable fly mode.
+    // Fly mode disabled.
     _isStartFly(event) {
         return false;
     }
-    // Right mouse (button 2) for orbit rotation.
+    // Right mouse (button 2) for orbiting/rotation.
     _isStartOrbit(event) {
         return this.enableOrbit && event.button === 2;
     }
@@ -206,22 +205,13 @@ class CameraControls extends Script {
         this._element.setPointerCapture(event.pointerId);
         this._pointerEvents.set(event.pointerId, event);
         const startMousePan = this._isStartMousePan(event);
-        const startFly = this._isStartFly(event);
         const startOrbit = this._isStartOrbit(event);
         if (startMousePan) {
             this._lastPosition.set(event.clientX, event.clientY);
             this._panning = true;
         }
-        if (startFly) {
-            // Not used.
-            this._zoomDist = this._cameraDist;
-            this._origin.copy(this._camera.entity.getPosition());
-            this._position.copy(this._origin);
-            this._cameraTransform.setTranslate(0, 0, 0);
-            this._flying = true;
-        }
         if (startOrbit) {
-            // When the right mouse is pressed, enter rotating mode.
+            // Enter rotation/orbit mode.
             this._rotating = true;
         }
     }
@@ -233,17 +223,16 @@ class CameraControls extends Script {
             if (this._panning) {
                 this._pan(tmpVa.set(event.clientX, event.clientY));
             } else if (this._rotating) {
-                // While right mouse drags, update the rotation input.
+                // Update rotation input from pointer movement.
                 const movementX = event.movementX || 0;
                 const movementY = event.movementY || 0;
-                // Adjust both pitch (x) and yaw (y) based on pointer movement.
                 this._dir.x = this._clampPitch(this._dir.x - movementY * this.lookSensitivity);
                 this._dir.y -= movementX * this.lookSensitivity;
             }
             return;
         }
         if (this._pointerEvents.size === 2) {
-            // For touch pinch-zoom.
+            // Touch pinch-zoom.
             const pinchDist = this._getPinchDist();
             if (this._lastPinchDist > 0) {
                 this._zoom((this._lastPinchDist - pinchDist) * this.pinchSpeed);
@@ -262,15 +251,6 @@ class CameraControls extends Script {
         if (this._rotating) {
             this._rotating = false;
         }
-        if (this._panning) {
-            this._panning = false;
-        }
-        if (this._flying) {
-            tmpV1.copy(this._camera.entity.forward).mulScalar(this._zoomDist);
-            this._origin.add(tmpV1);
-            this._position.add(tmpV1);
-            this._flying = false;
-        }
     }
 
     _onWheel(event) {
@@ -278,70 +258,46 @@ class CameraControls extends Script {
         this._zoom(event.deltaY);
     }
 
-    // Use Q and E keys to adjust horizontal (yaw) rotation.
+    // Override Q and E key handling: update yaw directly.
     _onKeyDown(event) {
         event.stopPropagation();
         const key = event.key.toLowerCase();
-        switch (key) {
-            case 'q':
-                this._rotateLeft = true;
-                break;
-            case 'e':
-                this._rotateRight = true;
-                break;
-            case 'w':
-                this._key.forward = true;
-                break;
-            case 's':
-                this._key.backward = true;
-                break;
-            case 'a':
-                this._key.left = true;
-                break;
-            case 'd':
-                this._key.right = true;
-                break;
-            case 'shift':
-                this._key.sprint = true;
-                break;
-            case 'control':
-                this._key.crouch = true;
-                break;
+        if (key === 'q') {
+            // Rotate left by decreasing yaw.
+            this._angles.y -= this.rotateSensitivity;
+        } else if (key === 'e') {
+            // Rotate right by increasing yaw.
+            this._angles.y += this.rotateSensitivity;
+        } else {
+            switch(key) {
+                case 'w': this._key.forward = true; break;
+                case 's': this._key.backward = true; break;
+                case 'a': this._key.left = true; break;
+                case 'd': this._key.right = true; break;
+                case 'shift': this._key.sprint = true; break;
+                case 'control': this._key.crouch = true; break;
+            }
         }
     }
 
     _onKeyUp(event) {
         event.stopPropagation();
         const key = event.key.toLowerCase();
-        switch (key) {
-            case 'q':
-                this._rotateLeft = false;
-                break;
-            case 'e':
-                this._rotateRight = false;
-                break;
-            case 'w':
-                this._key.forward = false;
-                break;
-            case 's':
-                this._key.backward = false;
-                break;
-            case 'a':
-                this._key.left = false;
-                break;
-            case 'd':
-                this._key.right = false;
-                break;
-            case 'shift':
-                this._key.sprint = false;
-                break;
-            case 'control':
-                this._key.crouch = false;
-                break;
+        if (key === 'q' || key === 'e') {
+            // No additional action on key release.
+        } else {
+            switch(key) {
+                case 'w': this._key.forward = false; break;
+                case 's': this._key.backward = false; break;
+                case 'a': this._key.left = false; break;
+                case 'd': this._key.right = false; break;
+                case 'shift': this._key.sprint = false; break;
+                case 'control': this._key.crouch = false; break;
+            }
         }
     }
 
-    // _look is used only for pointer-based orbiting; Q/E now affect _angles.y separately.
+    // _look() is still used for pointer-based orbiting.
     _look(event) {
         if (event.target !== this.app.graphicsDevice.canvas) { return; }
         const movementX = event.movementX || 0;
@@ -350,7 +306,7 @@ class CameraControls extends Script {
         this._dir.y -= movementX * this.lookSensitivity;
     }
 
-    // Panning moves the focal point (_origin).
+    // Panning: updates the focal point (_origin) based on pointer movement.
     _pan(pos) {
         if (!this.enablePan) { return; }
         const start = new Vec3();
@@ -358,7 +314,7 @@ class CameraControls extends Script {
         this._screenToWorldPan(this._lastPosition, start);
         this._screenToWorldPan(pos, end);
         tmpV1.sub2(start, end);
-        // Increase pan sensitivity when zoomed in.
+        // Scale pan sensitivity up when zoomed in.
         const panFactor = math.clamp(this.sceneSize / this._zoomDist, 1, 5);
         tmpV1.mulScalar(panFactor);
         this._origin.add(tmpV1);
@@ -380,25 +336,16 @@ class CameraControls extends Script {
         this._cameraTransform.setTranslate(0, 0, this._cameraDist);
     }
 
-    // _smoothTransform updates the camera transform.
-    // If rotating, the camera's position is computed from the focal point plus an offset vector
-    // computed from the orbit radius (_zoomDist) and the camera's Euler angles (_angles).
+    // Smooth transform update:
+    // When rotating, we use the pointer rotation input (_dir) to update _angles.
+    // Then we compute the camera's position as the focus (_origin) plus an offset.
     _smoothTransform(dt) {
         const a = dt === -1 ? 1 : lerpRate(this.lookDamping, dt);
-        // For pointer-based orbiting (if _rotating) update _angles from _dir.
         if (this._rotating) {
             this._angles.x = math.lerp(this._angles.x, this._dir.x, a);
             this._angles.y = math.lerp(this._angles.y, this._dir.y, a);
         }
-        // Additionally, update _angles.y based on Q/E keys.
-        if (this._rotateLeft) {
-            this._angles.y -= this.rotateSensitivity * dt;
-        }
-        if (this._rotateRight) {
-            this._angles.y += this.rotateSensitivity * dt;
-        }
-        // Compute the new camera position from the focal point plus an offset.
-        // This offset is the local (0,0,zoomDist) vector rotated by the current Euler angles.
+        // Compute new camera position as: _origin + (rotated offset vector)
         tmpV2.set(0, 0, this._zoomDist);
         tmpV2.applyEulerAngles(this._angles.x, this._angles.y, 0);
         this._position.copy(this._origin).add(tmpV2);
