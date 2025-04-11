@@ -76,7 +76,7 @@ class CameraControls extends Script {
      * @type {number}
      * @private
      */
-    _zoomDist = 1; // Default to 1 so it is non-zero for initial orbit calculations
+    _zoomDist = 0;
 
     /**
      * @type {number}
@@ -106,12 +106,6 @@ class CameraControls extends Script {
      * @type {boolean}
      * @private
      */
-    _orbiting = false;
-
-    /**
-     * @type {boolean}
-     * @private
-     */
     _panning = false;
 
     /**
@@ -119,6 +113,12 @@ class CameraControls extends Script {
      * @private
      */
     _flying = false;
+
+    /**
+     * @type {boolean}
+     * @private
+     */
+    _rotating = false; // New flag: true when right mouse button is used for rotation.
 
     /**
      * @type {Record<string, boolean>}
@@ -298,7 +298,6 @@ class CameraControls extends Script {
         this.sprintSpeed = sprintSpeed ?? this.sprintSpeed;
         this.crouchSpeed = crouchSpeed ?? this.crouchSpeed;
 
-        // Bind event methods.
         this._onWheel = this._onWheel.bind(this);
         this._onKeyDown = this._onKeyDown.bind(this);
         this._onKeyUp = this._onKeyUp.bind(this);
@@ -341,9 +340,7 @@ class CameraControls extends Script {
      * @param {Vec3} point - The focus point.
      */
     set focusPoint(point) {
-        if (!this._camera) {
-            return;
-        }
+        if (!this._camera) { return; }
         this.focus(point, this._camera.entity.getPosition(), false);
     }
 
@@ -352,8 +349,7 @@ class CameraControls extends Script {
     }
 
     /**
-     * The camera's pitch range. Having a value of -360 means no minimum pitch and 360 means no
-     * maximum pitch.
+     * The camera's pitch range. A value of -360 means no minimum pitch and 360 means no maximum.
      *
      * @attribute
      * @type {Vec2}
@@ -385,8 +381,7 @@ class CameraControls extends Script {
     }
 
     /**
-     * The maximum zoom distance relative to the scene size. Having a value less than or equal to
-     * zoomMin means no maximum zoom.
+     * The maximum zoom distance relative to the scene size (values ≤ zoomMin indicate no maximum zoom).
      *
      * @attribute
      * @type {number}
@@ -403,7 +398,9 @@ class CameraControls extends Script {
 
     /**
      * @private
-     * @param {number} value - The value to clamp.
+     * Clamp the pitch value.
+     *
+     * @param {number} value - The pitch value.
      * @returns {number} - The clamped value.
      */
     _clampPitch(value) {
@@ -414,7 +411,9 @@ class CameraControls extends Script {
 
     /**
      * @private
-     * @param {number} value - The value to clamp.
+     * Clamp the zoom value.
+     *
+     * @param {number} value - The zoom value.
      * @returns {number} - The clamped value.
      */
     _clampZoom(value) {
@@ -425,6 +424,8 @@ class CameraControls extends Script {
 
     /**
      * @private
+     * Prevent the context menu.
+     *
      * @param {MouseEvent} event - The mouse event.
      */
     _onContextMenu(event) {
@@ -433,119 +434,94 @@ class CameraControls extends Script {
 
     /**
      * @private
+     * Returns whether to start panning (only on left mouse button).
+     *
      * @param {PointerEvent} event - The pointer event.
-     * @returns {boolean} Whether the mouse pan should start.
+     * @returns {boolean} - True if panning should start.
      */
     _isStartMousePan(event) {
-        if (!this.enablePan) {
-            return false;
-        }
-        // Modified: Left mouse button (0) now triggers pan
-        if (event.shiftKey) {
-            return true;
-        }
-        return event.button === 0 || event.button === 1;
+        return this.enablePan && event.button === 0;
     }
 
     /**
      * @private
+     * Returns whether to start fly mode (disabled here).
+     *
      * @param {PointerEvent} event - The pointer event.
-     * @returns {boolean} Whether the fly should start.
+     * @returns {boolean} - Always false.
      */
     _isStartFly(event) {
-        if (!this.enableFly) {
-            return false;
-        }
-        // Middle mouse button (1) for fly mode if enabled
-        return event.button === 1;
+        return false;
     }
 
     /**
-     * @param {PointerEvent} event - The pointer event.
-     * @returns {boolean} Whether the orbit should start.
      * @private
+     * Returns whether to start rotation mode (using right mouse button).
+     *
+     * @param {PointerEvent} event - The pointer event.
+     * @returns {boolean} - True if right mouse button is used.
      */
     _isStartOrbit(event) {
-        if (!this.enableOrbit) {
-            return false;
-        }
-        // Modified: Right mouse button (2) now triggers orbit
-        return event.button === 2;
+        return this.enableOrbit && event.button === 2;
     }
 
     /**
      * @private
+     * Handler for pointer down events.
+     *
      * @param {PointerEvent} event - The pointer event.
      */
     _onPointerDown(event) {
-        if (!this._camera) {
-            return;
-        }
+        if (!this._camera) { return; }
         this._element.setPointerCapture(event.pointerId);
         this._pointerEvents.set(event.pointerId, event);
 
-        const startTouchPan = this.enablePan && this._pointerEvents.size === 2;
         const startMousePan = this._isStartMousePan(event);
         const startFly = this._isStartFly(event);
-        const startOrbit = this._isStartOrbit(event);
+        const startRotate = this._isStartOrbit(event); // For rotation
 
-        if (startTouchPan) {
-            // start touch pan
-            this._lastPinchDist = this._getPinchDist();
-            this._getMidPoint(this._lastPosition);
-            this._panning = true;
-        }
         if (startMousePan) {
-            // start mouse pan
             this._lastPosition.set(event.clientX, event.clientY);
             this._panning = true;
         }
         if (startFly) {
-            // start fly
+            // Not used in this configuration.
             this._zoomDist = this._cameraDist;
             this._origin.copy(this._camera.entity.getPosition());
             this._position.copy(this._origin);
             this._cameraTransform.setTranslate(0, 0, 0);
             this._flying = true;
         }
-        if (startOrbit) {
-            // Modified orbit: Set the orbit pivot to the world point under the mouse press.
-            const orbitPivot = new Vec3();
-            const screenPos = new Vec2(event.clientX, event.clientY);
-            this._screenToWorldPan(screenPos, orbitPivot);
-            // Use the computed point as the new focal point for orbiting.
-            this._origin.copy(orbitPivot);
-            this._orbiting = true;
+        if (startRotate) {
+            // For rotation mode, simply set the flag;
+            // do not change _origin so the camera stays fixed.
+            this._rotating = true;
         }
     }
 
     /**
      * @private
+     * Handler for pointer move events.
+     *
      * @param {PointerEvent} event - The pointer event.
      */
     _onPointerMove(event) {
-        if (this._pointerEvents.size === 0) {
-            return;
-        }
+        if (this._pointerEvents.size === 0) { return; }
         this._pointerEvents.set(event.pointerId, event);
 
         if (this._pointerEvents.size === 1) {
             if (this._panning) {
-                // mouse pan
+                // For panning, update based on left mouse movement.
                 this._pan(tmpVa.set(event.clientX, event.clientY));
-            } else if (this._orbiting || this._flying) {
+            } else if (this._rotating || this._flying) {
+                // For rotation (right mouse) or fly mode (if enabled), update rotation.
                 this._look(event);
             }
             return;
         }
 
         if (this._pointerEvents.size === 2) {
-            // touch pan
-            if (this._panning) {
-                this._pan(this._getMidPoint(tmpVa));
-            }
-
-            // pinch zoom
+            // For touch controls (if needed)
             const pinchDist = this._getPinchDist();
             if (this._lastPinchDist > 0) {
                 this._zoom((this._lastPinchDist - pinchDist) * this.pinchSpeed);
@@ -556,6 +532,8 @@ class CameraControls extends Script {
 
     /**
      * @private
+     * Handler for pointer up events.
+     *
      * @param {PointerEvent} event - The pointer event.
      */
     _onPointerUp(event) {
@@ -565,8 +543,8 @@ class CameraControls extends Script {
             this._lastPinchDist = -1;
             this._panning = false;
         }
-        if (this._orbiting) {
-            this._orbiting = false;
+        if (this._rotating) {
+            this._rotating = false;
         }
         if (this._panning) {
             this._panning = false;
@@ -581,6 +559,8 @@ class CameraControls extends Script {
 
     /**
      * @private
+     * Handler for the mouse wheel.
+     *
      * @param {WheelEvent} event - The wheel event.
      */
     _onWheel(event) {
@@ -590,74 +570,48 @@ class CameraControls extends Script {
 
     /**
      * @private
+     * Handler for key down events.
+     *
      * @param {KeyboardEvent} event - The keyboard event.
      */
     _onKeyDown(event) {
         event.stopPropagation();
         switch (event.key.toLowerCase()) {
-            case 'w':
-                this._key.forward = true;
-                break;
-            case 's':
-                this._key.backward = true;
-                break;
-            case 'a':
-                this._key.left = true;
-                break;
-            case 'd':
-                this._key.right = true;
-                break;
-            case 'q':
-                this._key.up = true;
-                break;
-            case 'e':
-                this._key.down = true;
-                break;
-            case 'shift':
-                this._key.sprint = true;
-                break;
-            case 'control':
-                this._key.crouch = true;
-                break;
+            case 'w': this._key.forward = true; break;
+            case 's': this._key.backward = true; break;
+            case 'a': this._key.left = true; break;
+            case 'd': this._key.right = true; break;
+            case 'q': this._key.up = true; break;
+            case 'e': this._key.down = true; break;
+            case 'shift': this._key.sprint = true; break;
+            case 'control': this._key.crouch = true; break;
         }
     }
 
     /**
      * @private
+     * Handler for key up events.
+     *
      * @param {KeyboardEvent} event - The keyboard event.
      */
     _onKeyUp(event) {
         event.stopPropagation();
         switch (event.key.toLowerCase()) {
-            case 'w':
-                this._key.forward = false;
-                break;
-            case 's':
-                this._key.backward = false;
-                break;
-            case 'a':
-                this._key.left = false;
-                break;
-            case 'd':
-                this._key.right = false;
-                break;
-            case 'q':
-                this._key.up = false;
-                break;
-            case 'e':
-                this._key.down = false;
-                break;
-            case 'shift':
-                this._key.sprint = false;
-                break;
-            case 'control':
-                this._key.crouch = false;
-                break;
+            case 'w': this._key.forward = false; break;
+            case 's': this._key.backward = false; break;
+            case 'a': this._key.left = false; break;
+            case 'd': this._key.right = false; break;
+            case 'q': this._key.up = false; break;
+            case 'e': this._key.down = false; break;
+            case 'shift': this._key.sprint = false; break;
+            case 'control': this._key.crouch = false; break;
         }
     }
 
     /**
      * @private
+     * Update the rotation direction based on pointer movement.
+     *
      * @param {PointerEvent} event - The pointer event.
      */
     _look(event) {
@@ -666,6 +620,7 @@ class CameraControls extends Script {
         }
         const movementX = event.movementX || 0;
         const movementY = event.movementY || 0;
+        // Update the directional angles using the look sensitivity.
         this._dir.x = this._clampPitch(this._dir.x - movementY * this.lookSensitivity);
         this._dir.y -= movementX * this.lookSensitivity;
     }
@@ -674,29 +629,14 @@ class CameraControls extends Script {
      * @param {number} dt - The delta time.
      */
     _move(dt) {
-        if (!this.enableFly) {
-            return;
-        }
-
+        if (!this.enableFly) { return; }
         tmpV1.set(0, 0, 0);
-        if (this._key.forward) {
-            tmpV1.add(this._camera.entity.forward);
-        }
-        if (this._key.backward) {
-            tmpV1.sub(this._camera.entity.forward);
-        }
-        if (this._key.left) {
-            tmpV1.sub(this._camera.entity.right);
-        }
-        if (this._key.right) {
-            tmpV1.add(this._camera.entity.right);
-        }
-        if (this._key.up) {
-            tmpV1.add(this._camera.entity.up);
-        }
-        if (this._key.down) {
-            tmpV1.sub(this._camera.entity.up);
-        }
+        if (this._key.forward) { tmpV1.add(this._camera.entity.forward); }
+        if (this._key.backward) { tmpV1.sub(this._camera.entity.forward); }
+        if (this._key.left) { tmpV1.sub(this._camera.entity.right); }
+        if (this._key.right) { tmpV1.add(this._camera.entity.right); }
+        if (this._key.up) { tmpV1.add(this._camera.entity.up); }
+        if (this._key.down) { tmpV1.sub(this._camera.entity.up); }
         tmpV1.normalize();
         const speed = this._key.crouch ? this.crouchSpeed : this._key.sprint ? this.sprintSpeed : this.moveSpeed;
         tmpV1.mulScalar(this.sceneSize * speed * dt);
@@ -705,8 +645,10 @@ class CameraControls extends Script {
 
     /**
      * @private
+     * Computes the midpoint of two pointer events.
+     *
      * @param {Vec2} out - The output vector.
-     * @returns {Vec2} The mid point.
+     * @returns {Vec2} The midpoint.
      */
     _getMidPoint(out) {
         const [a, b] = this._pointerEvents.values();
@@ -717,6 +659,8 @@ class CameraControls extends Script {
 
     /**
      * @private
+     * Computes the pinch distance between two pointer events.
+     *
      * @returns {number} The pinch distance.
      */
     _getPinchDist() {
@@ -728,70 +672,61 @@ class CameraControls extends Script {
 
     /**
      * @private
+     * Convert screen position to a world point by intersecting a ray with a plane.
+     *
      * @param {Vec2} pos - The screen position.
      * @param {Vec3} point - The output point.
      */
     _screenToWorldPan(pos, point) {
         const mouseW = this._camera.screenToWorld(pos.x, pos.y, 1);
         const cameraPos = this._camera.entity.getPosition();
-
-        // Use a fallback value if _zoomDist is 0.
-        const effectiveZoomDist = this._zoomDist || 1;
-        const focusDirScaled = tmpV1.copy(this._camera.entity.forward).mulScalar(effectiveZoomDist);
+        const focusDirScaled = tmpV1.copy(this._camera.entity.forward).mulScalar(this._zoomDist);
         const focalPos = tmpV2.add2(cameraPos, focusDirScaled);
-        
-        let planeNormal = focusDirScaled.mulScalar(-1);
-        if (planeNormal.lengthSq() > 0) {
-            planeNormal = planeNormal.normalize();
-        }
-        
+        const planeNormal = focusDirScaled.mulScalar(-1).normalize();
         const plane = tmpP1.setFromPointNormal(focalPos, planeNormal);
         const ray = tmpR1.set(cameraPos, mouseW.sub(cameraPos).normalize());
-
         plane.intersectsRay(ray, point);
     }
 
     /**
      * @private
-     * @param {Vec2} pos - The screen position.
+     * Panning: calculates the world-space translation from screen movement.
+     *
+     * @param {Vec2} pos - The current screen position.
      */
     _pan(pos) {
-        if (!this.enablePan) {
-            return;
-        }
-
+        if (!this.enablePan) { return; }
         const start = new Vec3();
         const end = new Vec3();
-
         this._screenToWorldPan(this._lastPosition, start);
         this._screenToWorldPan(pos, end);
-
         tmpV1.sub2(start, end);
+        // Increase pan sensitivity when zoomed in.
+        const panFactor = math.clamp(this.sceneSize / this._zoomDist, 1, 5);
+        tmpV1.mulScalar(panFactor);
         this._origin.add(tmpV1);
-
         this._lastPosition.copy(pos);
     }
 
     /**
      * @private
+     * Zooms the camera based on a delta.
+     *
      * @param {number} delta - The delta.
      */
     _zoom(delta) {
-        if (!this.enableOrbit && !this.enablePan) {
-            return;
-        }
-
-        if (!this._camera) {
-            return;
-        }
+        if (!this.enableOrbit && !this.enablePan) { return; }
+        if (!this._camera) { return; }
         const distNormalized = this._zoomDist / (ZOOM_SCALE_SCENE_MULT * this.sceneSize);
         const scale = math.clamp(distNormalized, this.zoomScaleMin, 1);
-        this._zoomDist += (delta * this.wheelSpeed * this.sceneSize * scale);
+        this._zoomDist += delta * this.wheelSpeed * this.sceneSize * scale;
         this._zoomDist = this._clampZoom(this._zoomDist);
     }
 
     /**
      * @private
+     * Smoothly updates the camera distance.
+     *
      * @param {number} dt - The delta time.
      */
     _smoothZoom(dt) {
@@ -802,18 +737,25 @@ class CameraControls extends Script {
 
     /**
      * @private
+     * Smoothly updates the camera transform.
+     * In rotation mode the camera's position remains fixed while only angles change.
+     *
      * @param {number} dt - The delta time.
      */
     _smoothTransform(dt) {
         const a = dt === -1 ? 1 : lerpRate(this.lookDamping, dt);
         this._angles.x = math.lerp(this._angles.x, this._dir.x, a);
         this._angles.y = math.lerp(this._angles.y, this._dir.y, a);
-        this._position.lerp(this._position, this._origin, a);
+        if (!this._rotating) {
+            // In non-rotation mode, we interpolate the position toward the focal _origin.
+            this._position.lerp(this._position, this._origin, a);
+        }
         this._baseTransform.setTRS(this._position, tmpQ1.setFromEulerAngles(this._angles), Vec3.ONE);
     }
 
     /**
      * @private
+     * Updates the camera entity's transform.
      */
     _updateTransform() {
         tmpM1.copy(this._baseTransform).mul(this._cameraTransform);
@@ -822,52 +764,39 @@ class CameraControls extends Script {
     }
 
     /**
-     * Focus the camera on a point.
+     * Focuses the camera on a point.
      *
-     * @param {Vec3} point - The point.
-     * @param {Vec3} [start] - The start.
+     * @param {Vec3} point - The target point.
+     * @param {Vec3} [start] - The starting point.
      * @param {boolean} [smooth] - Whether to smooth the focus.
      */
     focus(point, start, smooth = true) {
-        if (!this._camera) {
-            return;
-        }
-        if (this._flying) {
-            return;
-        }
+        if (!this._camera) { return; }
+        if (this._flying) { return; }
         if (!start) {
             this._origin.copy(point);
-            if (!smooth) {
-                this._position.copy(point);
-            }
+            if (!smooth) { this._position.copy(point); }
             return;
         }
-
         tmpV1.sub2(start, point);
         const elev = Math.atan2(tmpV1.y, Math.sqrt(tmpV1.x * tmpV1.x + tmpV1.z * tmpV1.z)) * math.RAD_TO_DEG;
         const azim = Math.atan2(tmpV1.x, tmpV1.z) * math.RAD_TO_DEG;
         this._dir.set(this._clampPitch(-elev), azim);
-
         this._origin.copy(point);
-
         this._cameraTransform.setTranslate(0, 0, 0);
-
         const pos = this._camera.entity.getPosition();
         const rot = this._camera.entity.getRotation();
         this._baseTransform.setTRS(pos, rot, Vec3.ONE);
-
         this._zoomDist = this._clampZoom(tmpV1.length());
-
         if (!smooth) {
             this._smoothZoom(-1);
             this._smoothTransform(-1);
         }
-
         this._updateTransform();
     }
 
     /**
-     * Reset the zoom. For orbit and panning only.
+     * Resets the zoom (for orbit and panning).
      *
      * @param {number} [zoomDist] - The zoom distance.
      * @param {boolean} [smooth] - Whether to smooth the zoom.
@@ -880,11 +809,11 @@ class CameraControls extends Script {
     }
 
     /**
-     * Refocus the camera.
+     * Refocuses the camera.
      *
-     * @param {Vec3} point - The point.
-     * @param {Vec3} [start] - The start.
-     * @param {number} [zoomDist] - The zoom distance.
+     * @param {Vec3} point - The new focus point.
+     * @param {Vec3} [start] - The starting point.
+     * @param {number} [zoomDist] - The new zoom distance.
      * @param {boolean} [smooth] - Whether to smooth the refocus.
      */
     refocus(point, start = null, zoomDist, smooth = true) {
@@ -895,44 +824,42 @@ class CameraControls extends Script {
     }
 
     /**
+     * Attaches the camera and sets up event listeners.
+     *
      * @param {CameraComponent} camera - The camera component.
      */
     attach(camera) {
         this._camera = camera;
-
-        // Attach events to canvas instead of window
+        // Attach events to the canvas.
         this._element.addEventListener('wheel', this._onWheel, PASSIVE);
         this._element.addEventListener('pointerdown', this._onPointerDown);
         this._element.addEventListener('pointermove', this._onPointerMove);
         this._element.addEventListener('pointerup', this._onPointerUp);
         this._element.addEventListener('contextmenu', this._onContextMenu);
-
-        // These can stay on window since they're keyboard events
+        // Attach keyboard events on window.
         window.addEventListener('keydown', this._onKeyDown, false);
         window.addEventListener('keyup', this._onKeyUp, false);
     }
 
+    /**
+     * Detaches event listeners.
+     */
     detach() {
-        // Remove from canvas instead of window
         this._element.removeEventListener('wheel', this._onWheel, PASSIVE);
         this._element.removeEventListener('pointermove', this._onPointerMove);
         this._element.removeEventListener('pointerdown', this._onPointerDown);
         this._element.removeEventListener('pointerup', this._onPointerUp);
         this._element.removeEventListener('contextmenu', this._onContextMenu);
-
-        // Remove keyboard events from window
         window.removeEventListener('keydown', this._onKeyDown, false);
         window.removeEventListener('keyup', this._onKeyUp, false);
-
         this._camera = null;
-
         this._dir.x = this._angles.x;
         this._dir.y = this._angles.y;
         this._origin.copy(this._position);
-
         this._pointerEvents.clear();
         this._lastPinchDist = -1;
         this._panning = false;
+        this._rotating = false;
         this._key = {
             forward: false,
             backward: false,
@@ -946,22 +873,15 @@ class CameraControls extends Script {
     }
 
     /**
+     * Called each frame to update the camera.
+     *
      * @param {number} dt - The delta time.
      */
     update(dt) {
-        if (this.app.xr?.active) {
-            return;
-        }
-
-        if (!this._camera) {
-            return;
-        }
-
+        if (this.app.xr?.active) { return; }
+        if (!this._camera) { return; }
         this._move(dt);
-
-        if (!this._flying) {
-            this._smoothZoom(dt);
-        }
+        if (!this._flying) { this._smoothZoom(dt); }
         this._smoothTransform(dt);
         this._updateTransform();
     }
