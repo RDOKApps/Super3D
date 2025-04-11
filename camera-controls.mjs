@@ -5,7 +5,7 @@ import { Vec2, Vec3, Ray, Plane, Mat4, Quat, Script, math } from 'https://cdn.js
 
 const tmpVa = new Vec2();
 const tmpV1 = new Vec3();
-const tmpV2 = new Vec3(); // used for calculating offsets
+const tmpV2 = new Vec3();  // for computing orbit offset
 const tmpM1 = new Mat4();
 const tmpQ1 = new Quat();
 const tmpR1 = new Ray();
@@ -16,7 +16,6 @@ const ZOOM_SCALE_SCENE_MULT = 10;
 
 /**
  * Calculate the lerp rate.
- *
  * @param {number} damping - The damping.
  * @param {number} dt - The delta time.
  * @returns {number} - The lerp rate.
@@ -24,121 +23,63 @@ const ZOOM_SCALE_SCENE_MULT = 10;
 const lerpRate = (damping, dt) => 1 - Math.pow(damping, dt * 1000);
 
 class CameraControls extends Script {
-    // Camera component attached to the entity.
     _camera = null;
-
-    // The focus (or pivot) point. The camera orbits around this.
+    // The focal point that the camera orbits around.
     _origin = new Vec3();
-
-    // The camera's position.
+    // The camera's current computed position.
     _position = new Vec3();
-
-    // Temporary direction vector used for input.
+    // Used to track input for rotation (in degrees).
     _dir = new Vec2();
-
-    // Euler angles for the camera.
+    // Current Euler angles for orbit (pitch then yaw).
     _angles = new Vec3();
-
-    // Pitch range.
     _pitchRange = new Vec2(-360, 360);
-
-    // Minimum zoom factor.
     _zoomMin = 0;
-
-    // Maximum zoom factor.
     _zoomMax = 0;
-
-    // The current zoom distance (radius for orbiting).
+    // _zoomDist is the desired orbit radius.
     _zoomDist = 0;
-
-    // Smoothed camera distance used for transitions.
+    // _cameraDist is the smoothed zoom distance.
     _cameraDist = 0;
-
-    // Active pointer events.
     _pointerEvents = new Map();
-
-    // For pinch-zoom.
     _lastPinchDist = -1;
-
-    // Last pointer position.
     _lastPosition = new Vec2();
-
-    // True when panning (left mouse).
+    // _panning is true when left mouse is dragging.
     _panning = false;
-
-    // True when rotating via right mouse.
+    // _rotating is true when right mouse is dragging.
     _rotating = false;
-
-    // Fly mode (unused).
+    // Fly mode is disabled in this revision.
     _flying = false;
-
-    // Standard key state (for movement); note Q and E will be repurposed.
+    // Standard key state.
     _key = {
         forward: false,
         backward: false,
         left: false,
         right: false,
-        // Up/down removed from here.
         sprint: false,
         crouch: false
     };
-
-    // New flags for rotating the target using Q and E.
+    // New flags for key-based rotation (Q/E keys).
     _rotateLeft = false;
     _rotateRight = false;
-
-    // The HTML element used for event attachment.
     _element;
-
-    // Used for zoom smoothing.
     _cameraTransform = new Mat4();
-
-    // Base transform computed from position and rotation.
     _baseTransform = new Mat4();
 
-    // Optional target entity (e.g. the Gaussian splat scene) that will be rotated via Q/E.
-    targetEntity = null;
-
-    // Accumulated rotation for the target entity (Euler angles: [pitch, yaw]).
-    _targetRotation = new Vec2();
-
-    // Sensitivity for rotating the target via keys.
-    rotateSensitivity = 0.5;
-
-    // Scene size (speeds are relative to this).
+    // Scene and camera control attributes.
     sceneSize = 100;
-
-    // Look sensitivity.
     lookSensitivity = 0.2;
-
-    // Look damping.
     lookDamping = 0.97;
-
-    // Move damping.
     moveDamping = 0.98;
-
-    // Enable orbit/rotation (right mouse).
     enableOrbit = true;
-
-    // Enable panning (left mouse).
     enablePan = true;
-
-    // Enable fly mode (not used here).
     enableFly = true;
-
-    // Touch pinch speed.
     pinchSpeed = 5;
-
-    // Mouse wheel speed.
     wheelSpeed = 0.005;
-
-    // Minimum zoom scale.
     zoomScaleMin = 0;
-
-    // Fly move, sprint, crouch speeds (unused).
     moveSpeed = 2;
     sprintSpeed = 4;
     crouchSpeed = 1;
+    // Sensitivity multiplier used by Q/E for horizontal orbit adjustment.
+    rotateSensitivity = 30;  // degrees per second at full press
 
     /**
      * @param {object} args - The script arguments.
@@ -162,12 +103,9 @@ class CameraControls extends Script {
             zoomMax,
             moveSpeed,
             sprintSpeed,
-            crouchSpeed,
-            targetEntity // new attribute
+            crouchSpeed
         } = args.attributes;
-
         this._element = element ?? this.app.graphicsDevice.canvas;
-
         this.enableOrbit = enableOrbit ?? this.enableOrbit;
         this.enablePan = enablePan ?? this.enablePan;
         this.enableFly = enableFly ?? this.enableFly;
@@ -180,13 +118,7 @@ class CameraControls extends Script {
         this.moveSpeed = moveSpeed ?? this.moveSpeed;
         this.sprintSpeed = sprintSpeed ?? this.sprintSpeed;
         this.crouchSpeed = crouchSpeed ?? this.crouchSpeed;
-        if (targetEntity) {
-            this.targetEntity = targetEntity;
-        }
-        // Initialize target rotation (starting at zero).
-        this._targetRotation.set(0, 0);
-
-        // Bind handlers.
+        // Bind event handlers.
         this._onWheel = this._onWheel.bind(this);
         this._onKeyDown = this._onKeyDown.bind(this);
         this._onKeyUp = this._onKeyUp.bind(this);
@@ -194,13 +126,11 @@ class CameraControls extends Script {
         this._onPointerMove = this._onPointerMove.bind(this);
         this._onPointerUp = this._onPointerUp.bind(this);
         this._onContextMenu = this._onContextMenu.bind(this);
-
         if (!this.entity.camera) {
             throw new Error('CameraControls script requires a camera component');
         }
         this.attach(this.entity.camera);
-
-        // Set the initial focus.
+        // Set initial focus.
         this.focusPoint = focusPoint ?? this.focusPoint;
         this.pitchRange = pitchRange ?? this.pitchRange;
         this.zoomMin = zoomMin ?? this.zoomMin;
@@ -258,15 +188,15 @@ class CameraControls extends Script {
         event.preventDefault();
     }
 
-    // Left mouse (button 0) triggers panning.
+    // Left mouse (button 0) for panning.
     _isStartMousePan(event) {
         return this.enablePan && event.button === 0;
     }
-    // Fly mode disabled.
+    // Disable fly mode.
     _isStartFly(event) {
         return false;
     }
-    // Right mouse (button 2) triggers rotation.
+    // Right mouse (button 2) for orbit rotation.
     _isStartOrbit(event) {
         return this.enableOrbit && event.button === 2;
     }
@@ -277,7 +207,7 @@ class CameraControls extends Script {
         this._pointerEvents.set(event.pointerId, event);
         const startMousePan = this._isStartMousePan(event);
         const startFly = this._isStartFly(event);
-        const startRotate = this._isStartOrbit(event);
+        const startOrbit = this._isStartOrbit(event);
         if (startMousePan) {
             this._lastPosition.set(event.clientX, event.clientY);
             this._panning = true;
@@ -290,8 +220,8 @@ class CameraControls extends Script {
             this._cameraTransform.setTranslate(0, 0, 0);
             this._flying = true;
         }
-        if (startRotate && this.targetEntity) {
-            // Use right mouse to rotate the target.
+        if (startOrbit) {
+            // When the right mouse is pressed, enter rotating mode.
             this._rotating = true;
         }
     }
@@ -302,12 +232,18 @@ class CameraControls extends Script {
         if (this._pointerEvents.size === 1) {
             if (this._panning) {
                 this._pan(tmpVa.set(event.clientX, event.clientY));
+            } else if (this._rotating) {
+                // While right mouse drags, update the rotation input.
+                const movementX = event.movementX || 0;
+                const movementY = event.movementY || 0;
+                // Adjust both pitch (x) and yaw (y) based on pointer movement.
+                this._dir.x = this._clampPitch(this._dir.x - movementY * this.lookSensitivity);
+                this._dir.y -= movementX * this.lookSensitivity;
             }
-            // In this configuration, rotation via right mouse is handled by keys or pointer movement
-            // updating _targetRotation (see below) rather than altering camera's orientation.
             return;
         }
         if (this._pointerEvents.size === 2) {
+            // For touch pinch-zoom.
             const pinchDist = this._getPinchDist();
             if (this._lastPinchDist > 0) {
                 this._zoom((this._lastPinchDist - pinchDist) * this.pinchSpeed);
@@ -326,7 +262,9 @@ class CameraControls extends Script {
         if (this._rotating) {
             this._rotating = false;
         }
-        if (this._panning) { this._panning = false; }
+        if (this._panning) {
+            this._panning = false;
+        }
         if (this._flying) {
             tmpV1.copy(this._camera.entity.forward).mulScalar(this._zoomDist);
             this._origin.add(tmpV1);
@@ -340,7 +278,7 @@ class CameraControls extends Script {
         this._zoom(event.deltaY);
     }
 
-    // Override key event handling so that Q and E are now used for target rotation.
+    // Use Q and E keys to adjust horizontal (yaw) rotation.
     _onKeyDown(event) {
         event.stopPropagation();
         const key = event.key.toLowerCase();
@@ -403,7 +341,7 @@ class CameraControls extends Script {
         }
     }
 
-    // _look() remains for any camera-based rotation (if needed).
+    // _look is used only for pointer-based orbiting; Q/E now affect _angles.y separately.
     _look(event) {
         if (event.target !== this.app.graphicsDevice.canvas) { return; }
         const movementX = event.movementX || 0;
@@ -412,7 +350,7 @@ class CameraControls extends Script {
         this._dir.y -= movementX * this.lookSensitivity;
     }
 
-    // Panning: moves the focus point (_origin) based on pointer movement.
+    // Panning moves the focal point (_origin).
     _pan(pos) {
         if (!this.enablePan) { return; }
         const start = new Vec3();
@@ -442,16 +380,28 @@ class CameraControls extends Script {
         this._cameraTransform.setTranslate(0, 0, this._cameraDist);
     }
 
-    // Smoothly update the camera transform.
-    // In panning mode, the camera's position interpolates toward the focus (_origin).
-    // (Orbiting via targetEntity rotation no longer affects the camera.)
+    // _smoothTransform updates the camera transform.
+    // If rotating, the camera's position is computed from the focal point plus an offset vector
+    // computed from the orbit radius (_zoomDist) and the camera's Euler angles (_angles).
     _smoothTransform(dt) {
         const a = dt === -1 ? 1 : lerpRate(this.lookDamping, dt);
-        this._angles.x = math.lerp(this._angles.x, this._dir.x, a);
-        this._angles.y = math.lerp(this._angles.y, this._dir.y, a);
-        if (!this._rotating) {
-            this._position.lerp(this._position, this._origin, a);
+        // For pointer-based orbiting (if _rotating) update _angles from _dir.
+        if (this._rotating) {
+            this._angles.x = math.lerp(this._angles.x, this._dir.x, a);
+            this._angles.y = math.lerp(this._angles.y, this._dir.y, a);
         }
+        // Additionally, update _angles.y based on Q/E keys.
+        if (this._rotateLeft) {
+            this._angles.y -= this.rotateSensitivity * dt;
+        }
+        if (this._rotateRight) {
+            this._angles.y += this.rotateSensitivity * dt;
+        }
+        // Compute the new camera position from the focal point plus an offset.
+        // This offset is the local (0,0,zoomDist) vector rotated by the current Euler angles.
+        tmpV2.set(0, 0, this._zoomDist);
+        tmpV2.applyEulerAngles(this._angles.x, this._angles.y, 0);
+        this._position.copy(this._origin).add(tmpV2);
         this._baseTransform.setTRS(this._position, tmpQ1.setFromEulerAngles(this._angles), Vec3.ONE);
     }
 
@@ -461,6 +411,7 @@ class CameraControls extends Script {
         this._camera.entity.setEulerAngles(tmpM1.getEulerAngles());
     }
 
+    // Focus the camera on a point.
     focus(point, start, smooth = true) {
         if (!this._camera) { return; }
         if (this._flying) { return; }
@@ -540,22 +491,10 @@ class CameraControls extends Script {
     update(dt) {
         if (this.app.xr?.active) { return; }
         if (!this._camera) { return; }
-        // Update any movement (fly mode is disabled).
         this._move(dt);
         if (!this._flying) { this._smoothZoom(dt); }
         this._smoothTransform(dt);
         this._updateTransform();
-
-        // If a target entity is provided, update its rotation based on right-mouse drags and Q/E keys.
-        if (this.targetEntity) {
-            // Update rotation from keys
-            let rotationDelta = 0;
-            if (this._rotateLeft) rotationDelta -= this.rotateSensitivity * dt;
-            if (this._rotateRight) rotationDelta += this.rotateSensitivity * dt;
-            this._targetRotation.y += rotationDelta;
-            // (Optionally, you can also incorporate pointer-based rotation if desired.)
-            this.targetEntity.setEulerAngles(this._targetRotation.x, this._targetRotation.y, 0);
-        }
     }
 
     destroy() {
