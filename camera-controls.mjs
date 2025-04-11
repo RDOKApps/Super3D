@@ -394,7 +394,6 @@ class CameraControls extends Script {
         this._zoomMax = value;
         this._zoomDist = this._clampZoom(this._zoomDist);
         this._smoothZoom(-1);
-
     }
 
     get zoomMax() {
@@ -509,7 +508,12 @@ class CameraControls extends Script {
             this._flying = true;
         }
         if (startOrbit) {
-            // start orbit
+            // Modified orbit: Set the orbit pivot to the world point under the mouse press.
+            const orbitPivot = new Vec3();
+            const screenPos = new Vec2(event.clientX, event.clientY);
+            this._screenToWorldPan(screenPos, orbitPivot);
+            // Use the computed point as the new focal point for orbiting.
+            this._origin.copy(orbitPivot);
             this._orbiting = true;
         }
     }
