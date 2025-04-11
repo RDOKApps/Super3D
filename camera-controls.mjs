@@ -16,21 +16,21 @@ const ZOOM_SCALE_SCENE_MULT = 10;
 
 /**
  * Calculate the lerp rate.
- * @param {number} damping - The damping factor.
- * @param {number} dt - The delta time.
- * @returns {number} - The lerp factor.
+ * @param {number} damping - Damping factor.
+ * @param {number} dt - Delta time.
+ * @returns {number} - The lerp rate.
  */
 const lerpRate = (damping, dt) => 1 - Math.pow(damping, dt * 1000);
 
 class CameraControls extends Script {
     _camera = null;
-    // The focal point that the camera orbits around.
+    // The focal point (pivot) that the camera orbits.
     _origin = new Vec3();
-    // The computed camera position.
+    // Computed camera position.
     _position = new Vec3();
-    // Stores rotation input (in degrees) from pointer.
+    // Temporary for pointer-based rotation input (in degrees).
     _dir = new Vec2();
-    // Euler angles for the camera (pitch = _angles.x, yaw = _angles.y).
+    // Current Euler angles (pitch, yaw) for orbiting.
     _angles = new Vec3();
     _pitchRange = new Vec2(-360, 360);
     _zoomMin = 0;
@@ -42,8 +42,9 @@ class CameraControls extends Script {
     _pointerEvents = new Map();
     _lastPinchDist = -1;
     _lastPosition = new Vec2();
-    // Flags for pointer-based panning and orbiting.
+    // Panning flag.
     _panning = false;
+    // Rotating (orbiting) flag.
     _rotating = false;
     _flying = false;
     _key = {
@@ -54,14 +55,16 @@ class CameraControls extends Script {
         sprint: false,
         crouch: false
     };
-    // NEW: targetEntity is the entity to rotate with Q/E keys.
-    // If left undefined, the script will try to find an entity named "splat".
+
+    // NEW: targetEntity is the entity to rotate when Q/E are pressed.
+    // If not explicitly set, the script will try to find an entity named "splat".
     targetEntity = null;
+
     _element;
     _cameraTransform = new Mat4();
     _baseTransform = new Mat4();
 
-    // Scene and control settings.
+    // Scene & control parameters.
     sceneSize = 100;
     lookSensitivity = 0.2;
     lookDamping = 0.97;
@@ -76,8 +79,8 @@ class CameraControls extends Script {
     sprintSpeed = 4;
     crouchSpeed = 1;
     
-    // rotateSensitivity (in degrees per second) is used by Q/E.
-    rotateSensitivity = 30;
+    // rotateSensitivity is in degrees per key press step.
+    rotateSensitivity = 5;
 
     constructor(args) {
         super(args);
@@ -99,7 +102,7 @@ class CameraControls extends Script {
             moveSpeed,
             sprintSpeed,
             crouchSpeed,
-            targetEntity // attribute to designate the target (model) to rotate.
+            targetEntity  // New attribute to specify the model to rotate.
         } = args.attributes;
 
         this._element = element ?? this.app.graphicsDevice.canvas;
@@ -130,7 +133,7 @@ class CameraControls extends Script {
             throw new Error('CameraControls script requires a camera component');
         }
         this.attach(this.entity.camera);
-        // Set initial focus.
+
         this.focusPoint = focusPoint ?? this.focusPoint;
         this.pitchRange = pitchRange ?? this.pitchRange;
         this.zoomMin = zoomMin ?? this.zoomMin;
@@ -188,15 +191,14 @@ class CameraControls extends Script {
         event.preventDefault();
     }
 
-    // Left mouse (button 0) pans the camera (updates _origin).
+    // Use left mouse (button 0) for panning.
     _isStartMousePan(event) {
         return this.enablePan && event.button === 0;
     }
-    // Fly mode is disabled.
     _isStartFly(event) {
         return false;
     }
-    // Right mouse (button 2) rotates/orbits the camera.
+    // Right mouse (button 2) for orbit rotation.
     _isStartOrbit(event) {
         return this.enableOrbit && event.button === 2;
     }
@@ -223,15 +225,17 @@ class CameraControls extends Script {
             if (this._panning) {
                 this._pan(tmpVa.set(event.clientX, event.clientY));
             } else if (this._rotating) {
+                // Update the rotation input based on pointer movement.
                 const movementX = event.movementX || 0;
                 const movementY = event.movementY || 0;
-                // Pointer-based orbit: adjust both pitch and yaw.
+                // Only update _dir so that pointer motion affects orbit orbiting.
                 this._dir.x = this._clampPitch(this._dir.x - movementY * this.lookSensitivity);
                 this._dir.y -= movementX * this.lookSensitivity;
             }
             return;
         }
         if (this._pointerEvents.size === 2) {
+            // Touch pinch-zoom.
             const pinchDist = this._getPinchDist();
             if (this._lastPinchDist > 0) {
                 this._zoom((this._lastPinchDist - pinchDist) * this.pinchSpeed);
@@ -257,35 +261,33 @@ class CameraControls extends Script {
         this._zoom(event.deltaY);
     }
 
-    // For Q and E keys, we now want to rotate the target model.
-    // If a targetEntity is assigned, we update its yaw.
-    // Otherwise, we modify the camera’s yaw as before.
+    // For Q and E keys: update the target entity's local Y rotation.
     _onKeyDown(event) {
         event.stopPropagation();
         const key = event.key.toLowerCase();
-        if (key === 'q') {
-            if (this.targetEntity || this.app.root.findByName("splat")) {
-                let target = this.targetEntity || this.app.root.findByName("splat");
-                if (target) {
-                    // Decrease yaw.
-                    let rot = target.getEulerAngles();
+        if (key === 'q' || key === 'e') {
+            // Try to get the target entity. If not explicitly assigned, attempt to find an entity named "splat".
+            let target = this.targetEntity || this.app.root.findByName("splat");
+            if (target) {
+                // Use local Euler angles to rotate the target horizontally.
+                let rot = target.getLocalEulerAngles();
+                if (key === 'q') {
                     rot.y -= this.rotateSensitivity;
-                    target.setEulerAngles(rot);
-                }
-            } else {
-                this._angles.y -= this.rotateSensitivity;
-            }
-        } else if (key === 'e') {
-            if (this.targetEntity || this.app.root.findByName("splat")) {
-                let target = this.targetEntity || this.app.root.findByName("splat");
-                if (target) {
-                    // Increase yaw.
-                    let rot = target.getEulerAngles();
+                } else { // key === 'e'
                     rot.y += this.rotateSensitivity;
-                    target.setEulerAngles(rot);
                 }
+                target.setLocalEulerAngles(rot.x, rot.y, rot.z);
+                event.preventDefault();
+                return;
             } else {
-                this._angles.y += this.rotateSensitivity;
+                // If no target entity is set, adjust the camera orbit's yaw.
+                if (key === 'q') {
+                    this._angles.y -= this.rotateSensitivity;
+                } else {
+                    this._angles.y += this.rotateSensitivity;
+                }
+                event.preventDefault();
+                return;
             }
         } else {
             switch (key) {
@@ -314,7 +316,7 @@ class CameraControls extends Script {
         }
     }
 
-    // _look() remains used for pointer-based orbiting.
+    // _look() is used for pointer-based orbiting.
     _look(event) {
         if (event.target !== this.app.graphicsDevice.canvas) return;
         const movementX = event.movementX || 0;
@@ -323,7 +325,7 @@ class CameraControls extends Script {
         this._dir.y -= movementX * this.lookSensitivity;
     }
 
-    // _pan() computes a translation for the focus (_origin) using left-mouse drag.
+    // _pan() computes a translation for the focal point (_origin) based on pointer movement.
     _pan(pos) {
         if (!this.enablePan) return;
         const start = new Vec3();
@@ -352,14 +354,14 @@ class CameraControls extends Script {
         this._cameraTransform.setTranslate(0, 0, this._cameraDist);
     }
 
-    // _smoothTransform updates the orbiting camera position.
+    // _smoothTransform updates the camera's orbit.
     _smoothTransform(dt) {
         const a = dt === -1 ? 1 : lerpRate(this.lookDamping, dt);
         if (this._rotating) {
             this._angles.x = math.lerp(this._angles.x, this._dir.x, a);
             this._angles.y = math.lerp(this._angles.y, this._dir.y, a);
         }
-        // Compute camera position: start with a local vector (0,0,zoomDist) then rotate it.
+        // Compute camera position as: _position = _origin + (rotated local vector [0, 0, _zoomDist]).
         tmpV2.set(0, 0, this._zoomDist);
         tmpV2.applyEulerAngles(this._angles.x, this._angles.y, 0);
         this._position.copy(this._origin).add(tmpV2);
@@ -399,9 +401,7 @@ class CameraControls extends Script {
 
     resetZoom(zoomDist = 0, smooth = true) {
         this._zoomDist = zoomDist;
-        if (!smooth) {
-            this._cameraDist = zoomDist;
-        }
+        if (!smooth) this._cameraDist = zoomDist;
     }
 
     refocus(point, start = null, zoomDist, smooth = true) {
