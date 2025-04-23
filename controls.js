@@ -1,8 +1,8 @@
 // controls.js
-import { Events }   from 'https://cdn.jsdelivr.net/gh/playcanvas/supersplat@main/src/events.ts';               // :contentReference[oaicite:0]{index=0}
-import { Tooltips } from 'https://cdn.jsdelivr.net/gh/playcanvas/supersplat@main/src/ui/tooltips.ts';         // :contentReference[oaicite:1]{index=1}
-import { ModeToggle } from 'https://cdn.jsdelivr.net/gh/playcanvas/supersplat@main/src/ui/mode-toggle.ts';     // :contentReference[oaicite:2]{index=2}
-import { ViewCube }  from 'https://cdn.jsdelivr.net/gh/playcanvas/supersplat@main/src/ui/view-cube.ts';        // :contentReference[oaicite:3]{index=3}
+import { Events }   from 'https://cdn.jsdelivr.net/gh/playcanvas/supersplat@main/src/events.js';               // :contentReference[oaicite:0]{index=0}
+import { Tooltips } from 'https://cdn.jsdelivr.net/gh/playcanvas/supersplat@main/src/ui/tooltips.js';         // :contentReference[oaicite:1]{index=1}
+import { ModeToggle } from 'https://cdn.jsdelivr.net/gh/playcanvas/supersplat@main/src/ui/mode-toggle.js';     // :contentReference[oaicite:2]{index=2}
+import { ViewCube }  from 'https://cdn.jsdelivr.net/gh/playcanvas/supersplat@main/src/ui/view-cube.js';        // :contentReference[oaicite:3]{index=3}
 
 export function initGitHubControls(app) {
     const events   = new Events();
