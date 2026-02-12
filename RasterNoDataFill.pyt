@@ -73,7 +73,7 @@ class CopyRasterFillNoData:
             parameterType="Optional",
             direction="Input",
         )
-        nodata_value.value = 256
+        nodata_value.value = 255
 
         pixel_type = arcpy.Parameter(
             displayName="Pixel Type",
@@ -112,7 +112,7 @@ class CopyRasterFillNoData:
         in_raster = parameters[0].valueAsText
         out_raster = parameters[1].valueAsText
         threshold = int(parameters[2].value) if parameters[2].value else 250
-        nodata_val = int(parameters[3].value) if parameters[3].value else 256
+        nodata_val = int(parameters[3].value) if parameters[3].value else 255
         pixel_type = parameters[4].valueAsText or "8_BIT_UNSIGNED"
 
         messages.addMessage("Reading input raster: {}".format(in_raster))
@@ -135,23 +135,23 @@ class CopyRasterFillNoData:
             # Use Con with a raster calculator expression.
             raster_obj = arcpy.Raster(in_raster)
 
-            # Extract individual bands
-            band1 = arcpy.sa.Raster(in_raster + "/Band_1")
-            band2 = arcpy.sa.Raster(in_raster + "/Band_2")
-            band3 = arcpy.sa.Raster(in_raster + "/Band_3")
+            # Extract individual bands using ExtractBand for robust format support
+            band1 = arcpy.sa.ExtractBand(raster_obj, [1])
+            band2 = arcpy.sa.ExtractBand(raster_obj, [2])
+            band3 = arcpy.sa.ExtractBand(raster_obj, [3])
 
             white_mask = (band1 >= threshold) & (band2 >= threshold) & (band3 >= threshold)
 
             # Process each band: where white, set to nodata_val; else keep original
             processed_bands = []
             for i in range(1, band_count + 1):
-                band = arcpy.sa.Raster(in_raster + "/Band_{}".format(i))
+                band = arcpy.sa.ExtractBand(raster_obj, [i])
                 result = arcpy.sa.Con(white_mask, nodata_val, band)
                 processed_bands.append(result)
 
-            # Composite the bands back together
+            # Composite the bands back together (use 'memory' workspace for ArcGIS Pro)
             composite = arcpy.CompositeBands_management(
-                processed_bands, "in_memory/composite"
+                processed_bands, "memory/composite"
             )
 
             messages.addMessage("Copying result to: {}".format(out_raster))
